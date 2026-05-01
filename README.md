@@ -50,9 +50,10 @@ Docker Compose mounts `data/`, `out/`, and `reports/` back into the repo.
 
 ## Environment variables
 
+
 - `TRUSTMRR_API_KEY` required
-- `MIN_MRR_CENTS` default `100000`
-- `MAX_MRR_CENTS` default `1000000`
+- `MIN_MRR_CENTS` default `100000` → minimum $1,000 MRR
+- `MAX_MRR_CENTS` default `1000000` → maximum $10,000 MRR
 - `LIMIT` default `50`
 - `MAX_PAGES` optional
 - `FETCH_DETAILS` default `true`
