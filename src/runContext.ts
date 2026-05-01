@@ -27,11 +27,14 @@ export type RunContext = {
       rankedByRoi: string;
       rankedByLowestBuildEffort: string;
       researchQueue: string;
+      moneyScaleAudit: string;
+      cleanOpportunityTable: string;
     };
     reports: {
       topOpportunities: string;
       researchSummary: string;
       chatGptBrief: string;
+      cleanOpportunityTable: string;
     };
     root: {
       runSummary: string;
@@ -96,12 +99,15 @@ export async function createRunContext(now = new Date()): Promise<RunContext> {
         rankedBySoloFit: join(outDir, OUTPUT_FILE_NAMES.out.rankedBySoloFit),
         rankedByRoi: join(outDir, OUTPUT_FILE_NAMES.out.rankedByRoi),
         rankedByLowestBuildEffort: join(outDir, OUTPUT_FILE_NAMES.out.rankedByLowestBuildEffort),
-        researchQueue: join(outDir, OUTPUT_FILE_NAMES.out.researchQueue)
+        researchQueue: join(outDir, OUTPUT_FILE_NAMES.out.researchQueue),
+        moneyScaleAudit: join(outDir, OUTPUT_FILE_NAMES.out.moneyScaleAudit),
+        cleanOpportunityTable: join(outDir, OUTPUT_FILE_NAMES.out.cleanOpportunityTable)
       },
       reports: {
         topOpportunities: join(reportsDir, OUTPUT_FILE_NAMES.reports.topOpportunities),
         researchSummary: join(reportsDir, OUTPUT_FILE_NAMES.reports.researchSummary),
-        chatGptBrief: join(reportsDir, OUTPUT_FILE_NAMES.reports.chatGptBrief)
+        chatGptBrief: join(reportsDir, OUTPUT_FILE_NAMES.reports.chatGptBrief),
+        cleanOpportunityTable: join(reportsDir, OUTPUT_FILE_NAMES.reports.cleanOpportunityTable)
       },
       root: {
         runSummary: join(runRoot, OUTPUT_FILE_NAMES.root.runSummary),
@@ -221,7 +227,7 @@ export function toRunRelativePath(context: RunContext, path: string): string {
 }
 
 export function nextFilesToOpen(): string[] {
-  return ["latest/reports/research-summary.md", "latest/out/ranked-by-roi.csv", "latest/reports/chatgpt-brief.md"];
+  return ["latest/reports/research-summary.md", "latest/reports/clean-opportunity-table.md", "latest/out/ranked-by-roi.csv", "latest/reports/chatgpt-brief.md"];
 }
 
 function formatRunId(date: Date): string {

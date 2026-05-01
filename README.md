@@ -65,8 +65,15 @@ MAX_MRR_CENTS=900000000
 - `REQUEST_DELAY_MS` default `3500`
 - `LOG_LEVEL` default `info`
 - `LEGACY_OUTPUTS_ENABLED` default `false`
+- `TRUSTMRR_MONEY_SCALE` default `auto`
 
+`TRUSTMRR_MONEY_SCALE` controls how TrustMRR money fields are normalized:
 
+- `auto`: detect cents vs dollars from raw API values and record warnings when uncertain
+- `cents`: divide money fields by 100
+- `dollars`: keep money fields as already-dollar values
+
+The code defaults remain `MIN_MRR_CENTS=100000`, `MAX_MRR_CENTS=1000000`, and `TRUSTMRR_MONEY_SCALE=auto`. `.env.example` can be edited locally for wider exploratory runs.
 
 ## Logging
 
@@ -100,7 +107,7 @@ Config:
    - apiKey: loaded
 
 🔎 Fetching TrustMRR list queries (34 planned)
-🔎 [1/34] achievable-revenue-desc
+🔎 [1/34] configured-range-revenue-desc
    Params: minMrr=100000 maxMrr=1000000 sort=revenue-desc limit=50
    📄 Page 1: 50 items
 ✅ Done: 50 items across 1 pages
@@ -135,6 +142,7 @@ latest/
 Newest reports to inspect:
 
 - `latest/reports/research-summary.md`
+- `latest/reports/clean-opportunity-table.md`
 - `latest/reports/chatgpt-brief.md`
 - `latest/out/ranked-by-roi.csv`
 
@@ -168,11 +176,30 @@ Set `LEGACY_OUTPUTS_ENABLED=true` to also copy outputs to the old root-level `da
 - `runs/<run-id>/out/ranked-by-roi.csv`: products sorted by ROI score.
 - `runs/<run-id>/out/ranked-by-lowest-build-effort.csv`: products sorted by low build effort.
 - `runs/<run-id>/out/research-queue.csv`: top opportunity research queries for manual follow-up.
+- `runs/<run-id>/out/money-scale-audit.csv`: raw money values, normalized values, scale decisions, confidence, and possible 100x warnings.
+- `runs/<run-id>/out/clean-opportunity-table.csv`: compact opportunity table for spreadsheet review.
 - `runs/<run-id>/reports/top-50-opportunities.md`: readable top opportunity notes.
 - `runs/<run-id>/reports/research-summary.md`: search strategy, ranking summaries, avoid categories, and limitations.
 - `runs/<run-id>/reports/chatgpt-brief.md`: compact brief for external competitor research.
+- `runs/<run-id>/reports/clean-opportunity-table.md`: clean opportunity table grouped for ChatGPT review.
 - `runs/<run-id>/run-summary.json`: machine-readable run metadata, stats, failures, and next files.
 - `runs/<run-id>/manifest.md`: human-readable run manifest.
+
+## Money scaling audit
+
+TrustMRR responses may expose money values as cents or dollars depending on the field/shape. The analyser preserves raw money fields in `normalized-startups.json` and writes a dedicated audit CSV:
+
+```text
+latest/out/money-scale-audit.csv
+```
+
+Inspect it when rankings look suspicious. Key fields include `rawMrr`, `mrrUsd`, `moneyScaleUsed`, `moneyScaleConfidence`, `possibleHundredXIssue`, and `moneyScaleWarnings`.
+
+For a forced comparison run:
+
+```sh
+TRUSTMRR_MONEY_SCALE=dollars npm run analyse
+```
 
 ## Scoring
 
@@ -191,7 +218,7 @@ Scores are heuristic. They are designed to prioritize products that look realist
 
 The analyser fetches multiple TrustMRR passes and dedupes by slug:
 
-- $1k-$10k MRR reference set sorted by revenue, growth, and newest
+- configured MRR range sorted by revenue, growth, and newest
 - uncapped high-revenue pattern-discovery set sorted by revenue, growth, and newest
 - category searches for SaaS, developer tools, productivity, analytics, AI, marketing, utilities, automation, ecommerce, and content categories
 

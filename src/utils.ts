@@ -50,17 +50,6 @@ export function firstNumber(...values: unknown[]): number | null {
   return null;
 }
 
-export function centsToUsd(value: unknown): number | null {
-  const number = asNumber(value);
-  return number === null ? null : round(number / 100, 2);
-}
-
-export function maybeUsdFromCentsOrUsd(value: unknown): number | null {
-  const number = asNumber(value);
-  if (number === null) return null;
-  return Math.abs(number) >= 1000 ? round(number / 100, 2) : round(number, 2);
-}
-
 export function round(value: number, places = 2): number {
   const factor = 10 ** places;
   return Math.round(value * factor) / factor;
