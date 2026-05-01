@@ -50,7 +50,6 @@ Docker Compose mounts `data/`, `out/`, and `reports/` back into the repo.
 
 ## Environment variables
 
-
 - `TRUSTMRR_API_KEY` required
 - `MIN_MRR_CENTS` default `100000` → minimum $1,000 MRR
 - `MAX_MRR_CENTS` default `1000000` → maximum $10,000 MRR
@@ -59,6 +58,50 @@ Docker Compose mounts `data/`, `out/`, and `reports/` back into the repo.
 - `FETCH_DETAILS` default `true`
 - `TOP_N` default `50`
 - `REQUEST_DELAY_MS` default `3500`
+- `LOG_LEVEL` default `info`
+
+## Logging
+
+The analyser prints colorful runtime progress so you can see what it is fetching, what failed, and what files were written.
+
+Supported log levels:
+
+- `silent`: only fatal errors and the final summary when available
+- `info`: normal progress, phase summaries, warnings, output inventory
+- `debug`: request-level details, safe query params, page progress, and rate-limit waits
+
+Run locally with debug logs:
+
+```sh
+LOG_LEVEL=debug npm run analyse
+```
+
+Run Docker with debug logs:
+
+```sh
+LOG_LEVEL=debug docker compose run --rm analyser
+```
+
+Example output:
+
+```text
+🚀 TrustMRR Opportunity Radar
+Config:
+   - minMrrCents: 100000
+   - maxMrrCents: 1000000
+   - apiKey: loaded
+
+🔎 Fetching TrustMRR list queries (34 planned)
+🔎 [1/34] achievable-revenue-desc
+   Params: minMrr=100000 maxMrr=1000000 sort=revenue-desc limit=50
+   📄 Page 1: 50 items
+✅ Done: 50 items across 1 pages
+
+📦 Wrote out/ranked-by-roi.csv
+🎯 ✅ TrustMRR Opportunity Radar complete
+```
+
+The logger never prints `TRUSTMRR_API_KEY`, Authorization headers, or request headers.
 
 ## Outputs
 

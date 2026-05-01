@@ -13,6 +13,7 @@ services:
       FETCH_DETAILS: ${FETCH_DETAILS:-true}
       TOP_N: ${TOP_N:-50}
       REQUEST_DELAY_MS: ${REQUEST_DELAY_MS:-3500}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./data:/app/data
       - ./out:/app/out
