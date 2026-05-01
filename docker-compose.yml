@@ -14,7 +14,10 @@ services:
       TOP_N: ${TOP_N:-50}
       REQUEST_DELAY_MS: ${REQUEST_DELAY_MS:-3500}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      LEGACY_OUTPUTS_ENABLED: ${LEGACY_OUTPUTS_ENABLED:-false}
     volumes:
+      - ./runs:/app/runs
+      - ./latest:/app/latest
       - ./data:/app/data
       - ./out:/app/out
       - ./reports:/app/reports

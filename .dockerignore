@@ -4,6 +4,8 @@ dist
 data
 out
 reports
+runs
+latest
 .git
 .DS_Store
 npm-debug.log*
