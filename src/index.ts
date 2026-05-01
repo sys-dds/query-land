@@ -210,7 +210,23 @@ async function main(): Promise<void> {
       logger,
       writtenFiles
     );
-    await writeAndLog(runContext.outputFiles.reports.chatGptBrief, () => writeChatGptBrief(runContext.outputFiles.reports.chatGptBrief, scored), logger, writtenFiles);
+    await writeAndLog(
+      runContext.outputFiles.reports.chatGptBrief,
+      () =>
+        writeChatGptBrief(runContext.outputFiles.reports.chatGptBrief, scored, {
+          generatedAt: new Date(),
+          topN,
+          moneyScaleMode: config.moneyScaleMode,
+          queryLogs,
+          detailsFetched: detailLogs.filter((log) => log.ok).length,
+          failedDetails: detailLogs.filter((log) => !log.ok).length,
+          runId: runContext.runId,
+          runFolder: runContext.runRoot,
+          latestFolder: runContext.latestRoot
+        }),
+      logger,
+      writtenFiles
+    );
     await writeAndLog(runContext.outputFiles.reports.cleanOpportunityTable, () => writeCleanOpportunityTableMd(runContext.outputFiles.reports.cleanOpportunityTable, scored), logger, writtenFiles);
     if (scored.some((startup) => startup.possibleHundredXIssue)) {
       logger.warn("Possible money scaling anomalies detected", { Open: "latest/out/money-scale-audit.csv" });

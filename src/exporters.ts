@@ -1,6 +1,18 @@
 import type { QueryLog, ResearchQueueRow, ScoredStartup } from "./types.js";
 import { formatNullable, formatUsd, textIncludes, writeText } from "./utils.js";
 
+type ChatGptBriefContext = {
+  generatedAt: Date;
+  topN: number;
+  moneyScaleMode: string;
+  queryLogs: QueryLog[];
+  detailsFetched: number;
+  failedDetails: number;
+  runId?: string;
+  runFolder?: string;
+  latestFolder?: string;
+};
+
 const CSV_COLUMNS = [
   "rank",
   "name",
@@ -223,49 +235,414 @@ export async function writeResearchSummary(path: string, startups: ScoredStartup
   await writeText(path, `${lines.join("\n")}\n`);
 }
 
-export async function writeChatGptBrief(path: string, startups: ScoredStartup[]): Promise<void> {
-  const anomalyWarning = startups.some((startup) => startup.possibleHundredXIssue)
-    ? ["**Money scaling anomalies detected. Inspect latest/out/money-scale-audit.csv before trusting rankings.**", ""]
-    : [];
+export async function writeChatGptBrief(path: string, startups: ScoredStartup[], context: ChatGptBriefContext): Promise<void> {
+  const failedQueries = context.queryLogs.filter((query) => query.error || query.itemsCollected === 0);
+  const top = startups.slice(0, 30);
+  const topTen = startups.slice(0, 10);
+  const anomalies = topSuspicious(startups);
+  const marketStudy = startups.filter((startup) => studyVsBuildClassification(startup) === "market-study").slice(0, 8);
   const lines = [
-    "# ChatGPT Brief: TrustMRR Opportunity Radar",
+    "# ChatGPT Decision Brief: TrustMRR Opportunity Radar",
     "",
-    ...anomalyWarning,
-    "Use this brief to continue competitor and build-choice research. Founder count is a proxy from TrustMRR cofounder data, not confirmed employee count.",
+    "## 1. Run context",
     "",
-    "## Top 30 ranked products",
+    `- Generated at: ${context.generatedAt.toISOString()}`,
+    `- Product count: ${startups.length}`,
+    `- Top N: ${context.topN}`,
+    `- Money scale mode: ${context.moneyScaleMode}`,
+    `- Possible money-scale anomaly count: ${startups.filter((startup) => startup.possibleHundredXIssue).length}`,
+    `- Query count: ${context.queryLogs.length}`,
+    `- Successful queries: ${context.queryLogs.length - failedQueries.length}`,
+    `- Failed/empty queries: ${failedQueries.length}`,
+    `- Detail records fetched: ${context.detailsFetched}`,
+    `- Detail failures: ${context.failedDetails}`,
+    ...(context.runId ? [`- Run ID: ${context.runId}`] : []),
+    ...(context.runFolder ? [`- Run folder: ${context.runFolder}`] : []),
+    ...(context.latestFolder ? [`- Latest folder: ${context.latestFolder}`] : []),
+    "- Source note: this is based on TrustMRR only; no online company verification has been run yet.",
     "",
-    "| Rank | Product | Category | MRR | 30d revenue | Active subs | Avg MRR/sub | ROI | Solo | Build effort | Final |",
-    "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ...startups.slice(0, 30).map((startup, index) =>
-      `| ${index + 1} | ${startup.name ?? startup.slug} | ${startup.category ?? startup.categoryBucket} | ${formatUsd(startup.mrrUsd)} | ${formatUsd(startup.last30DaysUsd)} | ${startup.activeSubscriptions ?? ""} | ${formatUsd(startup.avgMrrPerActiveSubUsd)} | ${startup.roiScore} | ${startup.soloLikelihoodScore} | ${startup.buildEffortScore}/10 | ${startup.finalOpportunityScore} |`
-    ),
+    "## 2. What this data can and cannot prove",
     "",
-    "## Scoring explanation",
+    "- TrustMRR revenue is useful but should be treated as directional.",
+    "- Money scaling is audited, but obvious anomalies can still exist and should be manually ignored.",
+    "- founderCount is only a TrustMRR cofounder/founder proxy, not verified employee count.",
+    "- No online company-size verification has been run yet.",
+    "- Buyer type, promise, distribution, and build difficulty are heuristic classifications.",
+    "- Final business decision still needs competitor/team-size validation.",
     "",
-    "- finalOpportunityScore = ROI 35%, solo likelihood 20%, build ease 15%, manual validation 15%, revenue 10%, inverse distribution difficulty 5%.",
-    "- ROI rewards pricing power, revenue per visitor, margin, growth, B2B buyers, and meaningful MRR with fewer subscriptions.",
-    "- Build effort and distribution difficulty are heuristic estimates, not facts.",
+    "## 3. Executive summary",
     "",
-    "## Research questions",
+    ...executiveSummary(startups),
     "",
-    "1. Which competitors already serve this exact buyer and use case?",
-    "2. Is the team actually solo/tiny based on public sources?",
-    "3. What does pricing reveal about willingness to pay?",
-    "4. Is there a narrower version a solo developer can build in 1-2 weeks?",
-    "5. Can the first paid version be delivered manually before building full automation?",
+    "The best opportunities are not necessarily the highest-MRR products. The best solo-dev target is usually a smaller wedge inside a proven revenue-adjacent B2B category.",
     "",
-    "## What I want ChatGPT to do next",
+    "## 4. Top 30 opportunity table",
     "",
-    "1. Verify competitors.",
-    "2. Estimate staff/team size from public sources.",
-    "3. Compare pricing.",
-    "4. Identify market gaps.",
-    "5. Recommend top 3 builds.",
+    "| Rank | Product | MRR | 30d Rev | Subs | Avg/sub | Team proxy | Buyer | Promise | Build | Distribution | Score |",
+    "|---:|---|---:|---:|---:|---:|---|---|---|---|---|---:|",
+    ...top.map((startup, index) => decisionTableRow(startup, index + 1)),
+    "",
+    "## 5. Best by lens",
+    "",
+    lensSection("Best ROI", topByLens(startups, "roi")),
+    lensSection("Highest MRR", topByLens(startups, "mrr")),
+    lensSection("Highest willingness to pay", topByLens(startups, "willingness")),
+    lensSection("Best solo-fit proxy", topByLens(startups, "solo")),
+    lensSection("Fastest MVP path", topByLens(startups, "fastest")),
+    lensSection("Easiest first 10 customers", topByLens(startups, "customers")),
+    "## 6. Market pattern summary",
+    "",
+    ...marketPatternSummary(startups),
+    "",
+    "## 7. Study vs build classification",
+    "",
+    "Do not remove anomalous rows entirely. The AI reviewer should ignore obvious anomalies manually.",
+    "",
+    "| Product | Classification | Reason |",
+    "|---|---|---|",
+    ...classificationRows(startups),
+    "",
+    "## 8. Big product → smaller solo wedge",
+    "",
+    ...smallerWedgeSuggestions(marketStudy.length > 0 ? marketStudy : startups.slice(0, 8)),
+    "",
+    "## 9. Top 10 detailed opportunity notes",
+    "",
+    ...topTen.flatMap((startup, index) => detailedOpportunityNotes(startup, index + 1)),
+    "## 10. Ideas and patterns to avoid",
+    "",
+    ...ideasAndPatternsToAvoid(startups),
+    "",
+    "Do not automatically copy the biggest product. Copy the buyer pain and build a narrower wedge.",
+    "",
+    "## 11. Best current build directions from this run",
+    "",
+    ...buildDirectionSuggestions(startups),
+    "",
+    "## 12. Current best hypothesis",
+    "",
+    ...currentBestHypothesis(startups),
+    "",
+    "## 13. Exact instruction for ChatGPT / AI reviewer",
+    "",
+    "Use this brief to help me choose a realistic one-person SaaS / micro-SaaS opportunity.",
+    "",
+    "Do not give generic startup advice.",
+    "",
+    "First, ignore obvious data anomalies manually.",
+    "",
+    "Then rank:",
+    "1. best solo-dev opportunity",
+    "2. highest willingness to pay",
+    "3. fastest MVP path",
+    "4. easiest first 10 customers",
+    "5. ideas to avoid",
+    "",
+    "Then pick:",
+    "- top 5 opportunities to investigate",
+    "- top 3 serious builds",
+    "- single best idea",
+    "",
+    "Prioritize:",
+    "- B2B",
+    "- clear ROI",
+    "- high ARPU",
+    "- reachable customers",
+    "- manual-first validation",
+    "- realistic $1k MRR with 1–10 customers",
+    "",
+    "Penalize:",
+    "- consumer volume plays",
+    "- SEO-only dependency",
+    "- marketplaces",
+    "- heavy compliance",
+    "- enterprise-only sales",
+    "- products needing huge polish",
+    "- products with unverified team size",
+    "- products with suspicious money data",
+    "",
+    "Finally, propose:",
+    "- a 30-day validation plan",
+    "- first paid offer",
+    "- first 20 customer sources",
+    "- what not to build yet",
     ""
   ];
 
   await writeText(path, `${lines.join("\n")}\n`);
+}
+
+function executiveSummary(startups: ScoredStartup[]): string[] {
+  const topFinal = startups.slice(0, 15);
+  const productsToStudy = topFinal.slice(0, 5).map(nameOf).join(", ") || "none";
+  const smallerWedges = uniqueTop(startups, (startup) => wedgeFor(startup).smallerWedge, 5).join("; ");
+  const avoid = ideasToAvoid(startups).slice(0, 5).map((startup) => `${nameOf(startup)} (${startup.rejectionFlags[0] ?? buildDifficulty(startup)})`).join(", ") || "none obvious";
+  const lines = [
+    `- Strongest opportunity pattern: ${dominant(topFinal, (startup) => `${mainPromise(startup)} for ${buyerType(startup)}`)}.`,
+    `- Strongest buyer types: ${uniqueTop(topFinal, buyerType, 5).join(", ") || "unknown"}.`,
+    `- Strongest promises: ${uniqueTop(topFinal, mainPromise, 6).join(", ") || "unknown"}.`,
+    `- Strongest products to study: ${productsToStudy}.`,
+    `- Strongest smaller-wedge directions: ${smallerWedges || "narrow B2B reporting, lead generation, conversion, and content workflows"}.`,
+    `- Biggest avoid patterns: ${avoid}.`
+  ];
+  return lines;
+}
+
+function decisionTableRow(startup: ScoredStartup, rank: number): string {
+  return [
+    rank,
+    nameOf(startup),
+    formatUsd(startup.mrrUsd),
+    formatUsd(startup.last30DaysUsd),
+    startup.activeSubscriptions ?? "",
+    formatUsd(startup.avgMrrPerActiveSubUsd),
+    estimatedTeamSizeLabel(startup),
+    buyerType(startup),
+    mainPromise(startup),
+    buildDifficulty(startup),
+    distributionChannel(startup),
+    startup.finalOpportunityScore
+  ].join(" | ").replace(/^/, "| ").replace(/$/, " |");
+}
+
+type Lens = "roi" | "mrr" | "willingness" | "solo" | "fastest" | "customers";
+
+function topByLens(startups: ScoredStartup[], lens: Lens): ScoredStartup[] {
+  const usable = lens === "willingness" ? startups.filter((startup) => !obviousDataAnomaly(startup)) : startups;
+  if (lens === "roi") return topBy(usable, (startup) => startup.roiScore);
+  if (lens === "mrr") return topBy(usable, (startup) => startup.mrrUsd ?? 0);
+  if (lens === "willingness") return topBy(usable, willingnessScore);
+  if (lens === "solo") return topBy(usable, (startup) => startup.soloLikelihoodScore);
+  if (lens === "fastest") return topBy(usable, fastMvpScore);
+  return topBy(
+    usable.filter((startup) => buyerType(startup) !== "unknown" && buyerType(startup) !== "consumer" && buildDifficulty(startup) !== "avoid"),
+    customerReachScore
+  );
+}
+
+function topBy(startups: ScoredStartup[], score: (startup: ScoredStartup) => number): ScoredStartup[] {
+  return [...startups].sort((a, b) => score(b) - score(a)).slice(0, 10);
+}
+
+function lensSection(title: string, startups: ScoredStartup[]): string {
+  const lines = [`### ${title}`, ""];
+  if (startups.length === 0) {
+    lines.push("- none");
+  } else {
+    startups.forEach((startup, index) => {
+      lines.push(`${index + 1}. ${nameOf(startup)} - MRR ${formatUsd(startup.mrrUsd)}, avg/sub ${formatUsd(startup.avgMrrPerActiveSubUsd)}, buyer ${buyerType(startup)}, promise ${mainPromise(startup)}, build ${buildDifficulty(startup)} - ${reasonForLens(startup)}.`);
+    });
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+function reasonForLens(startup: ScoredStartup): string {
+  if (startup.possibleHundredXIssue) return "possible money-scale anomaly; treat manually";
+  if ((startup.avgMrrPerActiveSubUsd ?? 0) >= 100) return "strong ARPU signal";
+  if (startup.manualValidationScore >= 75 && startup.buildEffortScore <= 4) return "manual-first, low-build wedge";
+  if (startup.roiScore >= 70) return "strong ROI scoring";
+  if (startup.soloLikelihoodScore >= 75) return "solo/tiny-team proxy is favorable";
+  return startup.opportunityNotes[0] ?? "balanced score across lenses";
+}
+
+function marketPatternSummary(startups: ScoredStartup[]): string[] {
+  const nearTop = startups.slice(0, 30);
+  const promises = ["get leads", "increase conversion", "prove ad ROI", "save time", "automate content", "recover revenue", "developer productivity"];
+  const promiseLines = promises.map((promise) => `- ${promise}: ${nearTop.filter((startup) => mainPromise(startup) === promise).map(nameOf).slice(0, 4).join(", ") || "not prominent in top 30"}`);
+  const examples = nearTop.slice(0, 10).map((startup) => `${nameOf(startup)} (${mainPromise(startup)})`).join(", ");
+  return [
+    `- Categories appearing most often near the top: ${countTop(nearTop, (startup) => startup.categoryBucket).join(", ") || "unknown"}.`,
+    `- Strongest buyer types: ${countTop(nearTop, buyerType).join(", ") || "unknown"}.`,
+    `- Strongest promises: ${countTop(nearTop, mainPromise).join(", ") || "unknown"}.`,
+    "- Pattern checks:",
+    ...promiseLines,
+    "- When supported by the data, the strongest markets are attribution/ad ROI tools, trial/conversion/revenue-recovery tools, lead-gen/outbound tools, and content distribution tools.",
+    `- Useful market examples, not direct clones: ${examples || "none"}.`
+  ];
+}
+
+function classificationRows(startups: ScoredStartup[]): string[] {
+  const selected = uniqueByName([
+    ...startups.slice(0, 12),
+    ...topByLens(startups, "willingness").slice(0, 5),
+    ...ideasToAvoid(startups).slice(0, 5),
+    ...topSuspicious(startups).slice(0, 5)
+  ]).slice(0, 24);
+  return selected.map((startup) => `| ${nameOf(startup)} | ${studyVsBuildClassification(startup)} | ${classificationReason(startup)} |`);
+}
+
+function studyVsBuildClassification(startup: ScoredStartup): "build-candidate" | "market-study" | "avoid" | "data-anomaly" | "needs-online-verification" {
+  if (obviousDataAnomaly(startup)) return "data-anomaly";
+  if (startup.rejectionFlags.some((flag) => flag.includes("marketplace") || flag.includes("consumer") || flag.includes("regulated"))) return "avoid";
+  if (startup.buildEffortScore <= 5 && startup.manualValidationScore >= 70 && buyerType(startup) !== "unknown" && startup.distributionDifficultyScore <= 6) return "build-candidate";
+  if ((startup.mrrUsd ?? 0) >= 5000 || startup.buildEffortScore >= 7) return "market-study";
+  return "needs-online-verification";
+}
+
+function classificationReason(startup: ScoredStartup): string {
+  const classification = studyVsBuildClassification(startup);
+  if (classification === "data-anomaly") return `suspicious money data: ${startup.moneyScaleWarnings.join("; ") || startup.moneyScaleConfidence}`;
+  if (classification === "avoid") return startup.rejectionFlags.join("; ") || "high-risk category";
+  if (classification === "build-candidate") return `${buyerType(startup)} buyer, ${mainPromise(startup)} promise, ${buildDifficulty(startup)} build, reachable via ${distributionChannel(startup)}`;
+  if (classification === "market-study") return "strong proof, but too broad or competitive to copy directly";
+  return "promising but team size, pricing, and competitors still need public verification";
+}
+
+function smallerWedgeSuggestions(startups: ScoredStartup[]): string[] {
+  const selected = uniqueByName(startups).slice(0, 8);
+  if (selected.length === 0) return ["- none"];
+  return selected.flatMap((startup) => {
+    const wedge = wedgeFor(startup);
+    return [
+      `- Source: ${nameOf(startup)}`,
+      `  - Proves: ${wedge.proves}`,
+      `  - Smaller wedge: ${wedge.smallerWedge}`,
+      `  - Do not copy: ${wedge.doNotCopy}`,
+      `  - First paid offer: ${wedge.firstOffer}`
+    ];
+  });
+}
+
+function detailedOpportunityNotes(startup: ScoredStartup, rank: number): string[] {
+  return [
+    `### ${rank}. ${nameOf(startup)}`,
+    "",
+    `- Website: ${startup.website ?? "unknown"}`,
+    `- MRR: ${formatUsd(startup.mrrUsd)}`,
+    `- 30d revenue: ${formatUsd(startup.last30DaysUsd)}`,
+    `- Active subscriptions: ${startup.activeSubscriptions ?? "unknown"}`,
+    `- Avg MRR/sub: ${formatUsd(startup.avgMrrPerActiveSubUsd)}`,
+    `- Buyer: ${buyerType(startup)}`,
+    `- Promise: ${mainPromise(startup)}`,
+    `- Build difficulty: ${buildDifficulty(startup)}`,
+    `- Distribution: ${distributionChannel(startup)}`,
+    `- Why people likely pay: ${whyPay(startup)}`,
+    `- Solo-dev copy angle: ${copyAngle(startup)}`,
+    `- What not to copy: ${whatNotToCopy(startup)}`,
+    `- Risk: ${startup.rejectionFlags.join("; ") || classificationReason(startup)}`,
+    `- Manual validation idea: ${manualValidationIdea(startup)}`,
+    "- Research queries to run next:",
+    ...researchQueries(startup).slice(0, 5).map((query) => `  - ${query}`),
+    ""
+  ];
+}
+
+function ideasAndPatternsToAvoid(startups: ScoredStartup[]): string[] {
+  const suspicious = topSuspicious(startups).slice(0, 5).map(nameOf).join(", ") || "none obvious";
+  return [
+    `- Obvious data anomalies: ${suspicious}.`,
+    "- Anonymous products with inconsistent money/customer numbers.",
+    "- Consumer apps needing volume.",
+    "- Marketplaces/network effects.",
+    "- Heavy compliance/healthcare/fintech unless intentionally targeted.",
+    "- Giant platforms as direct clone targets.",
+    "- Generic AI wrappers.",
+    "- SEO-only commodity tools.",
+    "- Low-ticket high-support tools.",
+    "- Unclear buyer products."
+  ];
+}
+
+function buildDirectionSuggestions(startups: ScoredStartup[]): string[] {
+  const directions = [
+    direction("Stripe trial / conversion leak detector", startups, ["increase conversion", "recover revenue"], "Find failed trials, failed payments, churn spikes, or onboarding leaks from Stripe exports.", "SaaS founders", "$99-$299/mo or $299 audit/report"),
+    direction("Ad attribution / ROAS reporting mini-tool", startups, ["prove ad ROI"], "Weekly ROAS anomaly report from ad spend and revenue exports.", "Shopify, DTC, and SaaS founders running ads", "$199-$499/mo or $299 audit/report"),
+    direction("Niche outbound lead finder", startups, ["get leads"], "Manual-first list building for one vertical with enrichment and reason-to-contact notes.", "Agencies, consultants, and B2B founders", "$199-$500 per batch"),
+    direction("Founder/agency content repurposing workflow", startups, ["automate content"], "Turn one video, call, or long post into channel-specific assets with review controls.", "Founders, creators, and small agencies", "$49-$199/mo"),
+    direction("Weekly revenue/analytics anomaly report", startups, ["improve analytics", "save time"], "Email a concise weekly report on revenue, traffic, conversion, and churn anomalies.", "SaaS and ecommerce founders", "$99-$299/mo")
+  ];
+  return directions.flatMap((item) => [
+    `### ${item.name}`,
+    "",
+    `- Why this pattern appears promising: ${item.why}`,
+    `- Source products that inspired it: ${item.sources}`,
+    `- First MVP wedge: ${item.mvp}`,
+    `- Likely buyer: ${item.buyer}`,
+    `- Likely price range hypothesis: ${item.price}`,
+    "- Validation method: sell the report manually to 10-20 targeted buyers before building automation.",
+    "- Verification needed: online competitor, team-size, and pricing checks.",
+    ""
+  ]);
+}
+
+function currentBestHypothesis(startups: ScoredStartup[]): string[] {
+  const candidate = bestSoloDev(startups)[0] ?? startups[0];
+  if (!candidate) return ["- Not enough scored data to form a hypothesis."];
+  const wedge = wedgeFor(candidate);
+  return [
+    `- Best category to investigate: ${candidate.categoryBucket} / ${buyerType(candidate)} tools around "${mainPromise(candidate)}".`,
+    `- Best solo-dev wedge: ${wedge.smallerWedge}.`,
+    "- Why it may reach $1k MRR: a B2B buyer with clear ROI can plausibly reach this with 1-10 customers if the first paid offer proves useful.",
+    "- What still needs verification: competitor density, public team size, real pricing, buyer reachability, and whether suspicious TrustMRR money data should be ignored.",
+    "- This is based only on TrustMRR data and is not a final decision until online research is added."
+  ];
+}
+
+function direction(name: string, startups: ScoredStartup[], promises: string[], mvp: string, buyer: string, price: string): { name: string; why: string; sources: string; mvp: string; buyer: string; price: string } {
+  const sources = startups.filter((startup) => promises.includes(mainPromise(startup))).slice(0, 4);
+  return {
+    name,
+    why: sources.length > 0 ? `${sources.length} top products point at this pain or adjacent buying trigger.` : "The scoring favors narrow B2B reporting/workflow wedges with manual validation potential.",
+    sources: sources.map(nameOf).join(", ") || startups.slice(0, 3).map(nameOf).join(", ") || "none",
+    mvp,
+    buyer,
+    price
+  };
+}
+
+function wedgeFor(startup: ScoredStartup): { proves: string; smallerWedge: string; doNotCopy: string; firstOffer: string } {
+  const promise = mainPromise(startup);
+  if (promise === "prove ad ROI") return { proves: "attribution/ad ROI pain", smallerWedge: "weekly ROAS anomaly report for Shopify/SaaS founders", doNotCopy: "full attribution platform", firstOffer: "$299 audit/report" };
+  if (promise === "increase conversion") return { proves: "conversion and funnel leak pain", smallerWedge: "checkout/trial leak report from Stripe and analytics exports", doNotCopy: "full CRO suite", firstOffer: "$199 funnel audit" };
+  if (promise === "recover revenue") return { proves: "revenue leakage is worth paying for", smallerWedge: "failed payment or abandoned checkout recovery checklist/report", doNotCopy: "full billing platform", firstOffer: "$299 recovery setup" };
+  if (promise === "get leads") return { proves: "lead supply and outbound targeting pain", smallerWedge: "niche lead list with reason-to-contact notes", doNotCopy: "horizontal lead database", firstOffer: "$250 lead batch" };
+  if (promise === "automate content") return { proves: "content distribution workload pain", smallerWedge: "repurpose one source asset into a weekly LinkedIn/email pack", doNotCopy: "generic all-in-one AI content platform", firstOffer: "$199 content pack" };
+  if (promise === "developer productivity") return { proves: "developers pay for workflow speed", smallerWedge: "one painful dev workflow checker, reporter, or CLI helper", doNotCopy: "full developer platform", firstOffer: "$19-$99/mo utility" };
+  return { proves: `${promise} pain for ${buyerType(startup)} buyers`, smallerWedge: `manual-first ${promise} report for one narrow ${buyerType(startup)} segment`, doNotCopy: "the full product surface", firstOffer: "$99-$299 paid audit/report" };
+}
+
+function manualValidationIdea(startup: ScoredStartup): string {
+  const wedge = wedgeFor(startup);
+  return `Offer ${wedge.firstOffer} for ${wedge.smallerWedge} using manual data collection first.`;
+}
+
+function dominant(startups: ScoredStartup[], label: (startup: ScoredStartup) => string): string {
+  return countTop(startups, label)[0] ?? "narrow B2B tools with clear ROI";
+}
+
+function uniqueTop(startups: ScoredStartup[], label: (startup: ScoredStartup) => string, limit: number): string[] {
+  return countTop(startups, label).filter((item) => !item.startsWith("unknown")).slice(0, limit);
+}
+
+function countTop(startups: ScoredStartup[], label: (startup: ScoredStartup) => string): string[] {
+  const counts = new Map<string, number>();
+  for (const startup of startups) {
+    const key = label(startup);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => `${key} (${count})`);
+}
+
+function uniqueByName(startups: ScoredStartup[]): ScoredStartup[] {
+  const seen = new Set<string>();
+  return startups.filter((startup) => {
+    const name = nameOf(startup);
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
+
+function nameOf(startup: ScoredStartup): string {
+  return startup.name ?? startup.slug;
+}
+
+function obviousDataAnomaly(startup: ScoredStartup): boolean {
+  const mrr = startup.mrrUsd ?? 0;
+  const last30Days = startup.last30DaysUsd ?? 0;
+  const avgSub = startup.avgMrrPerActiveSubUsd ?? 0;
+  return startup.possibleHundredXIssue || startup.moneyScaleConfidence === "low" || avgSub >= 100000 || (mrr >= 10000000 && last30Days > 0 && mrr > last30Days * 100);
 }
 
 export async function writeCleanOpportunityTableMd(path: string, startups: ScoredStartup[]): Promise<void> {
@@ -459,8 +836,8 @@ function researchQueries(startup: ScoredStartup): string[] {
 
 function topSuspicious(startups: ScoredStartup[]): ScoredStartup[] {
   return startups
-    .filter((startup) => startup.possibleHundredXIssue || startup.moneyScaleConfidence === "low")
-    .sort((a, b) => Number(b.possibleHundredXIssue) - Number(a.possibleHundredXIssue) || (b.rawMrr ?? 0) - (a.rawMrr ?? 0))
+    .filter(obviousDataAnomaly)
+    .sort((a, b) => Number(obviousDataAnomaly(b)) - Number(obviousDataAnomaly(a)) || (b.rawMrr ?? 0) - (a.rawMrr ?? 0))
     .slice(0, 20);
 }
 
