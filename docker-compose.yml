@@ -1,0 +1,19 @@
+services:
+  analyser:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TRUSTMRR_API_KEY: ${TRUSTMRR_API_KEY:-}
+      MIN_MRR_CENTS: ${MIN_MRR_CENTS:-100000}
+      MAX_MRR_CENTS: ${MAX_MRR_CENTS:-1000000}
+      LIMIT: ${LIMIT:-50}
+      MAX_PAGES: ${MAX_PAGES:-}
+      FETCH_DETAILS: ${FETCH_DETAILS:-true}
+      TOP_N: ${TOP_N:-50}
+      REQUEST_DELAY_MS: ${REQUEST_DELAY_MS:-3500}
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+      - ./reports:/app/reports
