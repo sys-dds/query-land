@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { parseLogLevel, type LogLevel } from "./logger.js";
 
 dotenv.config();
 
@@ -12,6 +13,12 @@ export type AppConfig = {
   fetchDetails: boolean;
   topN: number;
   requestDelayMs: number;
+  logLevel: LogLevel;
+};
+
+export type SafeConfigSummary = Omit<AppConfig, "apiKey" | "baseUrl" | "maxPages"> & {
+  apiKey: "loaded" | "missing";
+  maxPages: number | "all";
 };
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -55,6 +62,21 @@ export function loadConfig(): AppConfig {
     maxPages: optionalNumberFromEnv("MAX_PAGES"),
     fetchDetails: booleanFromEnv("FETCH_DETAILS", true),
     topN: numberFromEnv("TOP_N", 50),
-    requestDelayMs: numberFromEnv("REQUEST_DELAY_MS", 3500)
+    requestDelayMs: numberFromEnv("REQUEST_DELAY_MS", 3500),
+    logLevel: parseLogLevel(process.env.LOG_LEVEL)
+  };
+}
+
+export function safeConfigSummary(config: AppConfig): SafeConfigSummary {
+  return {
+    minMrrCents: config.minMrrCents,
+    maxMrrCents: config.maxMrrCents,
+    limit: config.limit,
+    maxPages: config.maxPages ?? "all",
+    fetchDetails: config.fetchDetails,
+    topN: config.topN,
+    requestDelayMs: config.requestDelayMs,
+    logLevel: config.logLevel,
+    apiKey: config.apiKey ? "loaded" : "missing"
   };
 }

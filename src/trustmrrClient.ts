@@ -1,4 +1,5 @@
 import type { AppConfig } from "./config.js";
+import type { Logger } from "./logger.js";
 import type { FetchQuery, QueryLog, UnknownRecord } from "./types.js";
 import { asArray, asNumber, asRecord, sleep } from "./utils.js";
 
@@ -11,7 +12,7 @@ type PageResult = {
 export class TrustMrrClient {
   private lastRequestAt = 0;
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: AppConfig, private readonly logger: Logger) {}
 
   async fetchQuery(query: FetchQuery): Promise<{ items: UnknownRecord[]; rawPages: UnknownRecord[]; log: QueryLog }> {
     const items: UnknownRecord[] = [];
@@ -23,6 +24,7 @@ export class TrustMrrClient {
       if (this.config.maxPages !== null && page > this.config.maxPages) break;
       try {
         const result = await this.fetchListPage(query, page);
+        this.logger.progress(`📄 Page ${page}: ${result.items.length} items`);
         rawPages.push({ query: query.name, page, response: result.raw });
         items.push(...result.items);
         if (!result.hasNextPage || result.items.length === 0) break;
@@ -55,6 +57,12 @@ export class TrustMrrClient {
     const params = this.queryToParams(query);
     params.page = page;
     params.limit = this.config.limit;
+    this.logger.debug("Fetching TrustMRR page", {
+      endpoint: "/startups",
+      query: query.name,
+      page,
+      params: formatParams(params)
+    });
     const raw = await this.request("/startups", params);
     const items = extractItems(raw);
     return {
@@ -92,7 +100,13 @@ export class TrustMrrClient {
 
       if (response.status === 429 && attempt < attempts) {
         const retryAfter = Number(response.headers.get("retry-after"));
-        await sleep(Number.isFinite(retryAfter) ? retryAfter * 1000 : this.config.requestDelayMs * 2);
+        const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : this.config.requestDelayMs * 2;
+        this.logger.warn("Rate limited by TrustMRR", {
+          Endpoint: path,
+          Attempt: `${attempt}/${attempts}`,
+          Waiting: `${waitMs}ms`
+        });
+        await sleep(waitMs);
         continue;
       }
 
@@ -101,7 +115,7 @@ export class TrustMrrClient {
 
       if (!response.ok) {
         const message = asRecord(parsed)?.message ?? asRecord(parsed)?.error ?? response.statusText;
-        throw new Error(`TrustMRR request failed (${response.status}) for ${path}: ${String(message)}`);
+        throw new Error(`TrustMRR request failed (${response.status}) for ${path} with params ${formatParams(params)}: ${String(message)}`);
       }
 
       const record = asRecord(parsed);
@@ -117,9 +131,19 @@ export class TrustMrrClient {
   private async rateLimit(): Promise<void> {
     const elapsed = Date.now() - this.lastRequestAt;
     const waitMs = Math.max(0, this.config.requestDelayMs - elapsed);
-    if (waitMs > 0) await sleep(waitMs);
+    if (waitMs > 0) {
+      if (this.logger.isDebug() || waitMs > 5000) this.logger.progress(`⏳ Waiting ${waitMs}ms before next TrustMRR request`);
+      await sleep(waitMs);
+    }
     this.lastRequestAt = Date.now();
   }
+}
+
+export function formatParams(params: UnknownRecord): string {
+  return Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
 }
 
 function parseJson(text: string): unknown {
