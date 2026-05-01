@@ -1,5 +1,5 @@
 import type { QueryLog, ResearchQueueRow, ScoredStartup } from "./types.js";
-import { formatNullable, formatUsd, writeText } from "./utils.js";
+import { formatNullable, formatUsd, textIncludes, writeText } from "./utils.js";
 
 const CSV_COLUMNS = [
   "rank",
@@ -12,6 +12,9 @@ const CSV_COLUMNS = [
   "country",
   "last30DaysUsd",
   "mrrUsd",
+  "rawMrr",
+  "rawLast30DaysRevenue",
+  "rawTotalRevenue",
   "totalRevenueUsd",
   "customers",
   "activeSubscriptions",
@@ -19,6 +22,7 @@ const CSV_COLUMNS = [
   "avgRevenuePerCustomerUsd",
   "visitorsLast30Days",
   "revenuePerVisitor",
+  "rawRevenuePerVisitor",
   "growth30d",
   "growthMRR30d",
   "profitMarginLast30Days",
@@ -40,6 +44,10 @@ const CSV_COLUMNS = [
   "distributionDifficultyScore",
   "manualValidationScore",
   "finalOpportunityScore",
+  "moneyScaleUsed",
+  "moneyScaleConfidence",
+  "possibleHundredXIssue",
+  "moneyScaleWarnings",
   "rejectionFlags",
   "opportunityNotes",
   "description"
@@ -71,6 +79,52 @@ export async function writeResearchQueueCsv(path: string, rows: ResearchQueueRow
   });
   const body = rows.map((row) => headers.map((header) => formatNullable(row[header as keyof ResearchQueueRow])));
   await writeText(path, toCsv([headers, ...body]));
+}
+
+export async function writeMoneyScaleAuditCsv(path: string, startups: ScoredStartup[]): Promise<void> {
+  const headers = [
+    "name",
+    "slug",
+    "rawMrr",
+    "mrrUsd",
+    "rawLast30DaysRevenue",
+    "last30DaysUsd",
+    "rawTotalRevenue",
+    "totalRevenueUsd",
+    "rawRevenuePerVisitor",
+    "revenuePerVisitor",
+    "activeSubscriptions",
+    "avgMrrPerActiveSubUsd",
+    "moneyScaleUsed",
+    "moneyScaleConfidence",
+    "possibleHundredXIssue",
+    "moneyScaleWarnings"
+  ];
+  const rows = startups.map((startup) => [
+    startup.name ?? startup.slug,
+    startup.slug,
+    startup.rawMrr,
+    startup.mrrUsd,
+    startup.rawLast30DaysRevenue,
+    startup.last30DaysUsd,
+    startup.rawTotalRevenue,
+    startup.totalRevenueUsd,
+    startup.rawRevenuePerVisitor,
+    startup.revenuePerVisitor,
+    startup.activeSubscriptions,
+    startup.avgMrrPerActiveSubUsd,
+    startup.moneyScaleUsed,
+    startup.moneyScaleConfidence,
+    startup.possibleHundredXIssue,
+    startup.moneyScaleWarnings.join("; ")
+  ]);
+  await writeText(path, toCsv([headers, ...rows]));
+}
+
+export async function writeCleanOpportunityTableCsv(path: string, startups: ScoredStartup[]): Promise<void> {
+  const headers = cleanColumns();
+  const rows = startups.map((startup, index) => cleanRow(startup, index + 1));
+  await writeText(path, toCsv([headers, ...rows]));
 }
 
 export async function writeTopOpportunities(path: string, startups: ScoredStartup[], topN: number): Promise<void> {
@@ -108,7 +162,7 @@ export async function writeTopOpportunities(path: string, startups: ScoredStartu
   await writeText(path, `${lines.join("\n")}\n`);
 }
 
-export async function writeResearchSummary(path: string, startups: ScoredStartup[], queryLogs: QueryLog[], detailsFetched: number, failedDetails: number): Promise<void> {
+export async function writeResearchSummary(path: string, startups: ScoredStartup[], queryLogs: QueryLog[], detailsFetched: number, failedDetails: number, moneyScaleMode: string): Promise<void> {
   const top = startups.slice(0, 10);
   const failedQueries = queryLogs.filter((query) => query.error || query.itemsCollected === 0);
   const lines = [
@@ -122,7 +176,7 @@ export async function writeResearchSummary(path: string, startups: ScoredStartup
     "",
     "## B. TrustMRR search strategy",
     "",
-    "- Filters used: minMrr=100000, maxMrr=1000000 for achievable reference passes; uncapped high-revenue passes with minMrr=100000.",
+    "- Filters used: configured minMrr/maxMrr range for configured-range passes; uncapped high-revenue passes with minMrr from config.",
     "- Sorts used: revenue-desc, growth-desc, newest.",
     "- Category queries used: saas, developer-tools, devtools, productivity, analytics, ai, ai-tools, marketing, utilities, automation, ecommerce, e-commerce, content, content-creation.",
     `- Pages fetched: ${queryLogs.reduce((sum, query) => sum + query.pagesFetched, 0)}`,
@@ -138,6 +192,19 @@ export async function writeResearchSummary(path: string, startups: ScoredStartup
     section("F. Top 10 by ROI", by(startups, "roiScore")),
     section("G. Top 10 by low build effort", [...startups].sort((a, b) => a.buildEffortScore - b.buildEffortScore)),
     section("H. Top 10 final opportunities", startups),
+    "## Money scaling audit",
+    "",
+    `- Configured TRUSTMRR_MONEY_SCALE: ${moneyScaleMode}`,
+    `- Count using cents: ${startups.filter((startup) => startup.moneyScaleUsed === "cents").length}`,
+    `- Count using dollars: ${startups.filter((startup) => startup.moneyScaleUsed === "dollars").length}`,
+    `- Count unknown: ${startups.filter((startup) => startup.moneyScaleUsed === "unknown" || startup.moneyScaleUsed === null).length}`,
+    `- Count possible hundred-x issues: ${startups.filter((startup) => startup.possibleHundredXIssue).length}`,
+    "",
+    "Top suspicious records:",
+    "",
+    ...topSuspicious(startups).map((startup, index) => `${index + 1}. ${startup.name ?? startup.slug} - rawMrr ${formatNullable(startup.rawMrr)}, MRR ${formatUsd(startup.mrrUsd)}, scale ${startup.moneyScaleUsed}, confidence ${startup.moneyScaleConfidence}, warnings ${startup.moneyScaleWarnings.join("; ") || "none"}`),
+    ...(topSuspicious(startups).length === 0 ? ["- none"] : []),
+    "",
     "## I. Categories to avoid",
     "",
     ...avoidCategories(startups).map((category) => `- ${category}: tends to imply higher build effort, harder distribution, network effects, or heavier compliance.`),
@@ -157,9 +224,13 @@ export async function writeResearchSummary(path: string, startups: ScoredStartup
 }
 
 export async function writeChatGptBrief(path: string, startups: ScoredStartup[]): Promise<void> {
+  const anomalyWarning = startups.some((startup) => startup.possibleHundredXIssue)
+    ? ["**Money scaling anomalies detected. Inspect latest/out/money-scale-audit.csv before trusting rankings.**", ""]
+    : [];
   const lines = [
     "# ChatGPT Brief: TrustMRR Opportunity Radar",
     "",
+    ...anomalyWarning,
     "Use this brief to continue competitor and build-choice research. Founder count is a proxy from TrustMRR cofounder data, not confirmed employee count.",
     "",
     "## Top 30 ranked products",
@@ -197,14 +268,118 @@ export async function writeChatGptBrief(path: string, startups: ScoredStartup[])
   await writeText(path, `${lines.join("\n")}\n`);
 }
 
+export async function writeCleanOpportunityTableMd(path: string, startups: ScoredStartup[]): Promise<void> {
+  const anomalies = startups.filter((startup) => startup.possibleHundredXIssue);
+  const soloDev = bestSoloDev(startups);
+  const willingness = highestWillingnessToPay(startups);
+  const fastest = fastestMvpPath(startups);
+  const easiestCustomers = easiestFirstCustomers(startups);
+  const avoid = ideasToAvoid(startups);
+  const lines = [
+    "# Clean Opportunity Table",
+    "",
+    "## Money scaling warning",
+    "",
+    anomalies.length > 0
+      ? `Money scaling anomalies detected in ${anomalies.length} record(s). Inspect latest/out/money-scale-audit.csv before trusting rankings.`
+      : "No possible hundred-x money scaling anomalies were detected in this run.",
+    "",
+    "## Top opportunities",
+    "",
+    "| Rank | Product | Real MRR | 30d Rev | Subs | Avg/sub | Team | Buyer | Promise | Build | Distribution | Score |",
+    "|---:|---|---:|---:|---:|---:|---|---|---|---|---|---:|",
+    ...startups.slice(0, 30).map((startup, index) => cleanMdRow(startup, index + 1)),
+    "",
+    listSection("Best solo-dev opportunities", soloDev),
+    listSection("Highest willingness to pay", willingness),
+    listSection("Fastest MVP path", fastest),
+    listSection("Easiest first 10 customers", easiestCustomers),
+    "## Ideas to avoid",
+    "",
+    ...(avoid.length > 0
+      ? avoid.map((startup) => `- ${startup.name ?? startup.slug}: ${startup.rejectionFlags.join("; ") || "high build/distribution risk"}; buyer ${buyerType(startup)}; build ${buildDifficulty(startup)}.`)
+      : ["- none flagged"]),
+    "",
+    "Avoid patterns: lots of tiny customers, consumer apps needing volume, SEO-only commodity tools, marketplaces, heavy compliance, huge enterprise platforms, products requiring massive polish, and products with unclear buyer.",
+    "",
+    "## Best next analysis for ChatGPT",
+    "",
+    "Paste this report into ChatGPT and ask it to rank:",
+    "1. best solo-dev opportunity",
+    "2. highest willingness to pay",
+    "3. fastest MVP path",
+    "4. easiest first 10 customers",
+    "5. ideas to avoid",
+    ""
+  ];
+  await writeText(path, `${lines.join("\n")}\n`);
+}
+
 function rowForStartup(startup: ScoredStartup, rank: number): string[] {
   return CSV_COLUMNS.map((column) => {
     if (column === "rank") return String(rank);
     if (column === "techStack") return startup.techStack.join("; ");
     if (column === "rejectionFlags") return startup.rejectionFlags.join("; ");
     if (column === "opportunityNotes") return startup.opportunityNotes.join("; ");
+    if (column === "moneyScaleWarnings") return startup.moneyScaleWarnings.join("; ");
     return formatNullable(startup[column]);
   });
+}
+
+function cleanColumns(): string[] {
+  return [
+    "rank",
+    "name",
+    "website",
+    "realMrrUsd",
+    "last30DaysRevenueUsd",
+    "activeSubscriptions",
+    "avgMrrPerActiveSubUsd",
+    "founderCount",
+    "estimatedTeamSizeLabel",
+    "category",
+    "buyerType",
+    "mainPromise",
+    "buildDifficulty",
+    "distributionChannel",
+    "finalOpportunityScore",
+    "roiScore",
+    "manualValidationScore",
+    "wedgePotentialScore",
+    "cloneRiskScore",
+    "moneyScaleUsed",
+    "moneyScaleConfidence",
+    "possibleHundredXIssue",
+    "moneyScaleWarnings"
+  ];
+}
+
+function cleanRow(startup: ScoredStartup, rank: number): string[] {
+  return [
+    rank,
+    startup.name ?? startup.slug,
+    startup.website,
+    startup.mrrUsd,
+    startup.last30DaysUsd,
+    startup.activeSubscriptions,
+    startup.avgMrrPerActiveSubUsd,
+    startup.founderCount,
+    estimatedTeamSizeLabel(startup),
+    startup.category,
+    buyerType(startup),
+    mainPromise(startup),
+    buildDifficulty(startup),
+    distributionChannel(startup),
+    startup.finalOpportunityScore,
+    startup.roiScore,
+    startup.manualValidationScore,
+    "",
+    "",
+    startup.moneyScaleUsed,
+    startup.moneyScaleConfidence,
+    startup.possibleHundredXIssue,
+    startup.moneyScaleWarnings.join("; ")
+  ].map(formatNullable);
 }
 
 function toCsv(rows: readonly (readonly unknown[])[]): string {
@@ -280,4 +455,155 @@ function researchQueries(startup: ScoredStartup): string[] {
     `site:reddit.com ${category} tool`,
     `"${category}" SaaS pricing competitors`
   ];
+}
+
+function topSuspicious(startups: ScoredStartup[]): ScoredStartup[] {
+  return startups
+    .filter((startup) => startup.possibleHundredXIssue || startup.moneyScaleConfidence === "low")
+    .sort((a, b) => Number(b.possibleHundredXIssue) - Number(a.possibleHundredXIssue) || (b.rawMrr ?? 0) - (a.rawMrr ?? 0))
+    .slice(0, 20);
+}
+
+function cleanMdRow(startup: ScoredStartup, rank: number): string {
+  return [
+    rank,
+    startup.name ?? startup.slug,
+    formatUsd(startup.mrrUsd),
+    formatUsd(startup.last30DaysUsd),
+    startup.activeSubscriptions ?? "",
+    formatUsd(startup.avgMrrPerActiveSubUsd),
+    estimatedTeamSizeLabel(startup),
+    buyerType(startup),
+    mainPromise(startup),
+    buildDifficulty(startup),
+    distributionChannel(startup),
+    startup.finalOpportunityScore
+  ].join(" | ").replace(/^/, "| ").replace(/$/, " |");
+}
+
+function listSection(title: string, startups: ScoredStartup[]): string {
+  const lines = [`## ${title}`, ""];
+  if (startups.length === 0) {
+    lines.push("- none");
+  } else {
+    startups.slice(0, 10).forEach((startup, index) => {
+      lines.push(`${index + 1}. ${startup.name ?? startup.slug} - ${formatUsd(startup.mrrUsd)} MRR, ${buyerType(startup)}, ${mainPromise(startup)}, build ${buildDifficulty(startup)}, score ${startup.finalOpportunityScore}.`);
+    });
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+function bestSoloDev(startups: ScoredStartup[]): ScoredStartup[] {
+  const goodConfidence = startups.some((startup) => startup.moneyScaleConfidence !== "low" && !startup.possibleHundredXIssue);
+  return startups
+    .filter((startup) => startup.buildEffortScore < 8)
+    .filter((startup) => !startup.rejectionFlags.some((flag) => flag.includes("consumer") || flag.includes("marketplace")))
+    .filter((startup) => !goodConfidence || (startup.moneyScaleConfidence !== "low" && !startup.possibleHundredXIssue))
+    .sort((a, b) => b.finalOpportunityScore - a.finalOpportunityScore);
+}
+
+function highestWillingnessToPay(startups: ScoredStartup[]): ScoredStartup[] {
+  return [...startups].sort((a, b) => willingnessScore(b) - willingnessScore(a));
+}
+
+function fastestMvpPath(startups: ScoredStartup[]): ScoredStartup[] {
+  return [...startups].sort((a, b) => fastMvpScore(b) - fastMvpScore(a));
+}
+
+function easiestFirstCustomers(startups: ScoredStartup[]): ScoredStartup[] {
+  return [...startups].sort((a, b) => customerReachScore(b) - customerReachScore(a));
+}
+
+function ideasToAvoid(startups: ScoredStartup[]): ScoredStartup[] {
+  return startups.filter((startup) => startup.rejectionFlags.length > 0 || startup.buildEffortScore >= 8 || buyerType(startup) === "consumer");
+}
+
+function willingnessScore(startup: ScoredStartup): number {
+  const b2b = ["SaaS", "agency", "ecommerce", "developer", "marketing", "sales", "finance", "healthcare"].includes(buyerType(startup)) ? 20 : 0;
+  const promise = ["get leads", "increase conversion", "prove ad ROI", "recover revenue", "developer productivity"].includes(mainPromise(startup)) ? 20 : 0;
+  return (startup.avgMrrPerActiveSubUsd ?? 0) + b2b + promise - (startup.activeSubscriptions ?? 9999) / 100;
+}
+
+function fastMvpScore(startup: ScoredStartup): number {
+  return startup.manualValidationScore + (10 - startup.buildEffortScore) * 10 + (10 - startup.distributionDifficultyScore) * 5;
+}
+
+function customerReachScore(startup: ScoredStartup): number {
+  const channel = distributionChannel(startup);
+  const channelScore = ["cold outbound", "community", "direct sales", "agency partnerships", "open-source"].includes(channel) ? 30 : channel === "SEO" ? 5 : 15;
+  const buyerScore = buyerType(startup) === "unknown" || buyerType(startup) === "consumer" ? 0 : 25;
+  return channelScore + buyerScore + startup.roiScore + (startup.isHighTicket ? 20 : 0);
+}
+
+function estimatedTeamSizeLabel(startup: ScoredStartup): string {
+  if (startup.founderCount === 1) return "likely solo";
+  if (startup.founderCount === 2) return "tiny team proxy";
+  if (startup.founderCount !== null && startup.founderCount > 2) return "less solo-friendly proxy";
+  return "unknown";
+}
+
+function buildDifficulty(startup: ScoredStartup): string {
+  if (startup.buildEffortScore <= 3) return "easy";
+  if (startup.buildEffortScore <= 5) return "medium";
+  if (startup.buildEffortScore <= 7) return "hard";
+  return "avoid";
+}
+
+function buyerType(startup: ScoredStartup): string {
+  const text = searchable(startup);
+  if (textIncludes(text, ["health", "medical", "clinic"])) return "healthcare";
+  if (textIncludes(text, ["finance", "accounting", "bookkeeping", "payment", "fintech"])) return "finance";
+  if (textIncludes(text, ["school", "student", "teacher", "course", "education"])) return "education";
+  if (textIncludes(text, ["developer", "devtool", "api", "github", "code"])) return "developer";
+  if (textIncludes(text, ["agency", "client"])) return "agency";
+  if (textIncludes(text, ["shopify", "ecommerce", "e-commerce", "store"])) return "ecommerce";
+  if (textIncludes(text, ["creator", "newsletter", "video", "podcast", "influencer"])) return "creator";
+  if (textIncludes(text, ["marketing", "ads", "campaign", "seo"])) return "marketing";
+  if (textIncludes(text, ["sales", "lead", "outbound", "crm"])) return "sales";
+  if (textIncludes(text, ["restaurant", "local business", "salon", "practice"])) return "local-business";
+  if (textIncludes(text, ["consumer", "mobile", "dating", "game", "social"])) return "consumer";
+  if (textIncludes(text, ["saas", "business", "b2b", "team"])) return "SaaS";
+  return "unknown";
+}
+
+function mainPromise(startup: ScoredStartup): string {
+  const text = searchable(startup);
+  if (textIncludes(text, ["lead", "prospect", "outbound"])) return "get leads";
+  if (textIncludes(text, ["conversion", "landing page", "checkout"])) return "increase conversion";
+  if (textIncludes(text, ["churn", "retention"])) return "reduce churn";
+  if (textIncludes(text, ["ad roi", "attribution", "roas"])) return "prove ad ROI";
+  if (textIncludes(text, ["save time", "automate", "workflow"])) return "save time";
+  if (textIncludes(text, ["content", "post", "copy", "video"])) return "automate content";
+  if (textIncludes(text, ["analytics", "dashboard", "report", "metrics"])) return "improve analytics";
+  if (textIncludes(text, ["recover", "abandoned", "refund", "chargeback"])) return "recover revenue";
+  if (textIncludes(text, ["support", "ticket", "helpdesk"])) return "reduce support";
+  if (textIncludes(text, ["seo", "search"])) return "improve SEO";
+  if (textIncludes(text, ["operations", "manage", "schedule", "admin"])) return "manage operations";
+  if (textIncludes(text, ["developer", "api", "code", "deploy"])) return "developer productivity";
+  if (textIncludes(text, ["compliance", "risk", "security", "legal"])) return "compliance/risk";
+  return "unknown";
+}
+
+function distributionChannel(startup: ScoredStartup): string {
+  const text = searchable(startup);
+  const buyer = buyerType(startup);
+  if (textIncludes(text, ["marketplace", "shopify app", "app store"])) return "marketplace";
+  if (textIncludes(text, ["open source", "github"])) return "open-source";
+  if (textIncludes(text, ["community", "discord", "slack"])) return "community";
+  if (textIncludes(text, ["agency"])) return "agency partnerships";
+  if (textIncludes(text, ["seo", "search"])) return "SEO";
+  if (textIncludes(text, ["ads", "paid"])) return "ads";
+  if (textIncludes(text, ["social", "content", "creator"])) return "social/content";
+  if (["SaaS", "agency", "developer", "marketing", "sales", "local-business"].includes(buyer)) return "cold outbound";
+  if (startup.isB2B || startup.isHighTicket) return "direct sales";
+  if (textIncludes(text, ["self serve", "product-led", "free trial"])) return "product-led";
+  return "unknown";
+}
+
+function searchable(startup: ScoredStartup): string {
+  return [startup.name, startup.category, startup.targetAudience, startup.description, startup.categoryBucket, startup.opportunityNotes.join(" "), startup.rejectionFlags.join(" ")]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }

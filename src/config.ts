@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { parseLogLevel, type LogLevel } from "./logger.js";
+import { parseMoneyScaleMode, type MoneyScaleMode } from "./money.js";
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ export type AppConfig = {
   requestDelayMs: number;
   logLevel: LogLevel;
   legacyOutputsEnabled: boolean;
+  moneyScaleMode: MoneyScaleMode;
 };
 
 export type SafeConfigSummary = Omit<AppConfig, "apiKey" | "baseUrl" | "maxPages"> & {
@@ -62,7 +64,8 @@ export function loadConfig(): AppConfig {
     topN: numberFromEnv("TOP_N", 50),
     requestDelayMs: numberFromEnv("REQUEST_DELAY_MS", 3500),
     logLevel: parseLogLevel(process.env.LOG_LEVEL),
-    legacyOutputsEnabled: booleanFromEnv("LEGACY_OUTPUTS_ENABLED", false)
+    legacyOutputsEnabled: booleanFromEnv("LEGACY_OUTPUTS_ENABLED", false),
+    moneyScaleMode: parseMoneyScaleMode(process.env.TRUSTMRR_MONEY_SCALE)
   };
 }
 
@@ -77,6 +80,7 @@ export function safeConfigSummary(config: AppConfig): SafeConfigSummary {
     requestDelayMs: config.requestDelayMs,
     logLevel: config.logLevel,
     legacyOutputsEnabled: config.legacyOutputsEnabled,
+    moneyScaleMode: config.moneyScaleMode,
     apiKeyLoaded: Boolean(config.apiKey)
   };
 }

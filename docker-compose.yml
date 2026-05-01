@@ -15,6 +15,7 @@ services:
       REQUEST_DELAY_MS: ${REQUEST_DELAY_MS:-3500}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LEGACY_OUTPUTS_ENABLED: ${LEGACY_OUTPUTS_ENABLED:-false}
+      TRUSTMRR_MONEY_SCALE: ${TRUSTMRR_MONEY_SCALE:-auto}
     volumes:
       - ./runs:/app/runs
       - ./latest:/app/latest

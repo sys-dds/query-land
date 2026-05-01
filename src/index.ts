@@ -1,5 +1,14 @@
 import { loadConfig, safeConfigSummary } from "./config.js";
-import { writeChatGptBrief, writeRankedCsv, writeResearchQueueCsv, writeResearchSummary, writeTopOpportunities } from "./exporters.js";
+import {
+  writeChatGptBrief,
+  writeCleanOpportunityTableCsv,
+  writeCleanOpportunityTableMd,
+  writeMoneyScaleAuditCsv,
+  writeRankedCsv,
+  writeResearchQueueCsv,
+  writeResearchSummary,
+  writeTopOpportunities
+} from "./exporters.js";
 import { createLogger, parseLogLevel, type Logger } from "./logger.js";
 import { dedupeBySlug, normalizeStartup } from "./normalize.js";
 import { buildResearchQueue } from "./researchQueue.js";
@@ -123,13 +132,19 @@ async function main(): Promise<void> {
         const slug = firstString(item.slug, item.handle, item.id);
         const detail = slug ? detailBySlug[slug] ?? null : null;
         const detailError = slug ? detailLogs.find((log) => log.slug === slug && !log.ok)?.error ?? null : null;
-        return normalizeStartup(item, asRecord(detail), detailError);
+        return normalizeStartup(item, asRecord(detail), detailError, config.moneyScaleMode);
       })
       .filter((startup) => startup !== null);
     logger.step(`Raw records: ${rawItems.length}`);
     logger.step(`Deduped startups: ${deduped.length}`);
     logger.step(`Normalized startups: ${normalized.length}`);
     logger.step(`Skipped invalid records: ${deduped.length - normalized.length}`);
+    logger.step("Money scaling:");
+    logger.step(`- mode: ${config.moneyScaleMode}`);
+    logger.step(`- cents: ${normalized.filter((startup) => startup.moneyScaleUsed === "cents").length}`);
+    logger.step(`- dollars: ${normalized.filter((startup) => startup.moneyScaleUsed === "dollars").length}`);
+    logger.step(`- unknown: ${normalized.filter((startup) => startup.moneyScaleUsed === "unknown" || startup.moneyScaleUsed === null).length}`);
+    logger.step(`- possible 100x anomalies: ${normalized.filter((startup) => startup.possibleHundredXIssue).length}`);
 
     logger.phase("🧮 Scoring opportunities");
     const scored = scoreStartups(normalized);
@@ -186,14 +201,20 @@ async function main(): Promise<void> {
       writtenFiles
     );
     await writeAndLog(runContext.outputFiles.out.researchQueue, () => writeResearchQueueCsv(runContext.outputFiles.out.researchQueue, researchQueue), logger, writtenFiles);
+    await writeAndLog(runContext.outputFiles.out.moneyScaleAudit, () => writeMoneyScaleAuditCsv(runContext.outputFiles.out.moneyScaleAudit, scored), logger, writtenFiles);
+    await writeAndLog(runContext.outputFiles.out.cleanOpportunityTable, () => writeCleanOpportunityTableCsv(runContext.outputFiles.out.cleanOpportunityTable, scored), logger, writtenFiles);
     await writeAndLog(runContext.outputFiles.reports.topOpportunities, () => writeTopOpportunities(runContext.outputFiles.reports.topOpportunities, scored, topN), logger, writtenFiles);
     await writeAndLog(
       runContext.outputFiles.reports.researchSummary,
-      () => writeResearchSummary(runContext.outputFiles.reports.researchSummary, scored, queryLogs, detailLogs.filter((log) => log.ok).length, detailLogs.filter((log) => !log.ok).length),
+      () => writeResearchSummary(runContext.outputFiles.reports.researchSummary, scored, queryLogs, detailLogs.filter((log) => log.ok).length, detailLogs.filter((log) => !log.ok).length, config.moneyScaleMode),
       logger,
       writtenFiles
     );
     await writeAndLog(runContext.outputFiles.reports.chatGptBrief, () => writeChatGptBrief(runContext.outputFiles.reports.chatGptBrief, scored), logger, writtenFiles);
+    await writeAndLog(runContext.outputFiles.reports.cleanOpportunityTable, () => writeCleanOpportunityTableMd(runContext.outputFiles.reports.cleanOpportunityTable, scored), logger, writtenFiles);
+    if (scored.some((startup) => startup.possibleHundredXIssue)) {
+      logger.warn("Possible money scaling anomalies detected", { Open: "latest/out/money-scale-audit.csv" });
+    }
 
     const stats = statsFor(queries.length, queryLogs, rawItems.length, deduped.length, normalized.length, scored.length, detailLogs);
     const failedQueries = queryLogs.filter((query) => query.error || query.itemsCollected === 0);
@@ -319,9 +340,9 @@ async function main(): Promise<void> {
 
 function buildQueries(minMrr: number, maxMrr: number): FetchQuery[] {
   const broad: FetchQuery[] = [
-    { name: "achievable-revenue-desc", minMrr, maxMrr, sort: "revenue-desc" },
-    { name: "achievable-growth-desc", minMrr, maxMrr, sort: "growth-desc" },
-    { name: "achievable-newest", minMrr, maxMrr, sort: "newest" },
+    { name: "configured-range-revenue-desc", minMrr, maxMrr, sort: "revenue-desc" },
+    { name: "configured-range-growth-desc", minMrr, maxMrr, sort: "growth-desc" },
+    { name: "configured-range-newest", minMrr, maxMrr, sort: "newest" },
     { name: "uncapped-revenue-desc", minMrr, sort: "revenue-desc" },
     { name: "uncapped-growth-desc", minMrr, sort: "growth-desc" },
     { name: "uncapped-newest", minMrr, sort: "newest" }
@@ -376,7 +397,7 @@ async function writeFailureArtifacts(
 }
 
 function runSpecificNextFiles(runContext: RunContext): string[] {
-  return [runContext.outputFiles.reports.researchSummary, runContext.outputFiles.out.rankedByRoi, runContext.outputFiles.reports.chatGptBrief];
+  return [runContext.outputFiles.reports.researchSummary, runContext.outputFiles.reports.cleanOpportunityTable, runContext.outputFiles.out.rankedByRoi, runContext.outputFiles.reports.chatGptBrief];
 }
 
 function statsFor(

@@ -1,5 +1,8 @@
 export type UnknownRecord = Record<string, unknown>;
 
+export type MoneyScaleUsed = "cents" | "dollars" | "unknown" | null;
+export type MoneyScaleConfidence = "high" | "medium" | "low" | "unknown";
+
 export type FetchQuery = {
   name: string;
   minMrr?: number;
@@ -41,6 +44,12 @@ export type NormalizedStartup = {
   country: string | null;
   foundedDate: string | null;
   paymentProvider: string | null;
+  rawMrr: number | null;
+  rawLast30DaysRevenue: number | null;
+  rawTotalRevenue: number | null;
+  rawGrowthMRR30d: number | null;
+  rawRevenuePerVisitor: number | null;
+  rawAskingPrice: number | null;
   last30DaysUsd: number | null;
   mrrUsd: number | null;
   totalRevenueUsd: number | null;
@@ -55,6 +64,10 @@ export type NormalizedStartup = {
   rank: number | null;
   onSale: boolean | null;
   askingPriceUsd: number | null;
+  moneyScaleUsed: MoneyScaleUsed;
+  moneyScaleConfidence: MoneyScaleConfidence;
+  moneyScaleWarnings: string[];
+  possibleHundredXIssue: boolean;
   multiple: number | null;
   xHandle: string | null;
   xFollowerCount: number | null;
