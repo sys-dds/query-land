@@ -4,7 +4,7 @@ import { parseLogLevel, type LogLevel } from "./logger.js";
 dotenv.config();
 
 export type AppConfig = {
-  apiKey: string;
+  apiKey: string | null;
   baseUrl: string;
   minMrrCents: number;
   maxMrrCents: number;
@@ -14,10 +14,11 @@ export type AppConfig = {
   topN: number;
   requestDelayMs: number;
   logLevel: LogLevel;
+  legacyOutputsEnabled: boolean;
 };
 
 export type SafeConfigSummary = Omit<AppConfig, "apiKey" | "baseUrl" | "maxPages"> & {
-  apiKey: "loaded" | "missing";
+  apiKeyLoaded: boolean;
   maxPages: number | "all";
 };
 
@@ -48,10 +49,7 @@ function booleanFromEnv(name: string, fallback: boolean): boolean {
 }
 
 export function loadConfig(): AppConfig {
-  const apiKey = process.env.TRUSTMRR_API_KEY;
-  if (!apiKey) {
-    throw new Error("TRUSTMRR_API_KEY is required. Create a local .env from .env.example and rerun the analyser.");
-  }
+  const apiKey = process.env.TRUSTMRR_API_KEY ?? null;
 
   return {
     apiKey,
@@ -63,7 +61,8 @@ export function loadConfig(): AppConfig {
     fetchDetails: booleanFromEnv("FETCH_DETAILS", true),
     topN: numberFromEnv("TOP_N", 50),
     requestDelayMs: numberFromEnv("REQUEST_DELAY_MS", 3500),
-    logLevel: parseLogLevel(process.env.LOG_LEVEL)
+    logLevel: parseLogLevel(process.env.LOG_LEVEL),
+    legacyOutputsEnabled: booleanFromEnv("LEGACY_OUTPUTS_ENABLED", false)
   };
 }
 
@@ -77,6 +76,7 @@ export function safeConfigSummary(config: AppConfig): SafeConfigSummary {
     topN: config.topN,
     requestDelayMs: config.requestDelayMs,
     logLevel: config.logLevel,
-    apiKey: config.apiKey ? "loaded" : "missing"
+    legacyOutputsEnabled: config.legacyOutputsEnabled,
+    apiKeyLoaded: Boolean(config.apiKey)
   };
 }

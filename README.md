@@ -46,9 +46,14 @@ docker compose build
 docker compose run --rm analyser
 ```
 
-Docker Compose mounts `data/`, `out/`, and `reports/` back into the repo.
+Docker Compose mounts `runs/` and `latest/` back into the repo. It also keeps `data/`, `out/`, and `reports/` mounted for optional legacy output compatibility.
 
 ## Environment variables
+
+# $100k MRR
+MIN_MRR_CENTS=10000000
+# $1m MRR
+MAX_MRR_CENTS=900000000
 
 - `TRUSTMRR_API_KEY` required
 - `MIN_MRR_CENTS` default `100000` → minimum $1,000 MRR
@@ -59,6 +64,9 @@ Docker Compose mounts `data/`, `out/`, and `reports/` back into the repo.
 - `TOP_N` default `50`
 - `REQUEST_DELAY_MS` default `3500`
 - `LOG_LEVEL` default `info`
+- `LEGACY_OUTPUTS_ENABLED` default `false`
+
+
 
 ## Logging
 
@@ -103,19 +111,68 @@ Config:
 
 The logger never prints `TRUSTMRR_API_KEY`, Authorization headers, or request headers.
 
+## Output folders and run history
+
+Normal analyser output is written to timestamped run folders:
+
+```text
+runs/<run-id>/
+  data/
+  out/
+  reports/
+  run-summary.json
+  manifest.md
+```
+
+Each run ID uses local time in `YYYY-MM-DD_HH-mm-ss` format, so folder names sort alphabetically and chronologically. If two runs start in the same second, the analyser appends a suffix such as `-001`.
+
+The newest successful run is also copied to:
+
+```text
+latest/
+```
+
+Newest reports to inspect:
+
+- `latest/reports/research-summary.md`
+- `latest/reports/chatgpt-brief.md`
+- `latest/out/ranked-by-roi.csv`
+
+Historical reports live under:
+
+- `runs/<timestamp>/reports/`
+
+List newest runs on macOS/Linux:
+
+```sh
+ls -1 runs | sort | tail -10
+```
+
+List newest runs in Windows PowerShell:
+
+```powershell
+Get-ChildItem runs | Sort-Object Name | Select-Object -Last 10
+```
+
+`runs/` is the historical source of truth. `latest/` is only a convenience copy and updates only after a successful completed run. If a run fails, partial outputs stay in `runs/<run-id>/` and `latest/` is not updated.
+
+Set `LEGACY_OUTPUTS_ENABLED=true` to also copy outputs to the old root-level `data/`, `out/`, and `reports/` folders. Compatibility mode can overwrite those old root outputs.
+
 ## Outputs
 
-- `data/raw-trustmrr.json`: raw TrustMRR list/detail responses and fetch logs, without request headers or API keys.
-- `data/normalized-startups.json`: normalized startups with scoring fields and raw source fields preserved per startup.
-- `out/ranked-by-mrr.csv`: products sorted by MRR.
-- `out/ranked-by-revenue-last-30-days.csv`: products sorted by last 30 days revenue.
-- `out/ranked-by-solo-fit.csv`: products sorted by solo/tiny-team likelihood.
-- `out/ranked-by-roi.csv`: products sorted by ROI score.
-- `out/ranked-by-lowest-build-effort.csv`: products sorted by low build effort.
-- `out/research-queue.csv`: top opportunity research queries for manual follow-up.
-- `reports/top-50-opportunities.md`: readable top opportunity notes.
-- `reports/research-summary.md`: search strategy, ranking summaries, avoid categories, and limitations.
-- `reports/chatgpt-brief.md`: compact brief for external competitor research.
+- `runs/<run-id>/data/raw-trustmrr.json`: raw TrustMRR list/detail responses and fetch logs, without request headers or API keys.
+- `runs/<run-id>/data/normalized-startups.json`: normalized startups with scoring fields and raw source fields preserved per startup.
+- `runs/<run-id>/out/ranked-by-mrr.csv`: products sorted by MRR.
+- `runs/<run-id>/out/ranked-by-revenue-last-30-days.csv`: products sorted by last 30 days revenue.
+- `runs/<run-id>/out/ranked-by-solo-fit.csv`: products sorted by solo/tiny-team likelihood.
+- `runs/<run-id>/out/ranked-by-roi.csv`: products sorted by ROI score.
+- `runs/<run-id>/out/ranked-by-lowest-build-effort.csv`: products sorted by low build effort.
+- `runs/<run-id>/out/research-queue.csv`: top opportunity research queries for manual follow-up.
+- `runs/<run-id>/reports/top-50-opportunities.md`: readable top opportunity notes.
+- `runs/<run-id>/reports/research-summary.md`: search strategy, ranking summaries, avoid categories, and limitations.
+- `runs/<run-id>/reports/chatgpt-brief.md`: compact brief for external competitor research.
+- `runs/<run-id>/run-summary.json`: machine-readable run metadata, stats, failures, and next files.
+- `runs/<run-id>/manifest.md`: human-readable run manifest.
 
 ## Scoring
 
